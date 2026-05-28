@@ -24,6 +24,7 @@ namespace WebCrawler
         // --- Управление ---
         private readonly Button _startBtn = new();
         private readonly Button _stopBtn = new();
+        private readonly Button _csvBtn = new();
 
         // --- Отображение ---
         private readonly DataGridView _grid = new();
@@ -33,6 +34,7 @@ namespace WebCrawler
         private readonly ToolStripStatusLabel _statusLabel = new();
 
         private CancellationTokenSource? _cts;
+        private Crawler? _crawler;   // последний краулер — для экспорта результатов
 
         // Палитра
         private static readonly Color Accent = Color.FromArgb(0, 120, 215);   // синий
@@ -169,6 +171,10 @@ namespace WebCrawler
             _stopBtn.Enabled = false;
             _stopBtn.Click += OnStop;
 
+            StyleActionButton(_csvBtn, "⤓  Экспорт CSV", Color.FromArgb(33, 145, 80));
+            _csvBtn.Enabled = false;
+            _csvBtn.Click += OnExportCsv;
+
             var panel = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -179,6 +185,7 @@ namespace WebCrawler
             };
             panel.Controls.Add(_startBtn);
             panel.Controls.Add(_stopBtn);
+            panel.Controls.Add(_csvBtn);
             return panel;
         }
 
@@ -206,13 +213,19 @@ namespace WebCrawler
             _grid.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI Semibold", 9.5f);
             _grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(6, 0, 0, 0);
 
-            AddColumn("num", "#", 6, DataGridViewContentAlignment.MiddleRight);
-            AddColumn("status", "Код", 8, DataGridViewContentAlignment.MiddleCenter);
-            AddColumn("depth", "Глуб.", 8, DataGridViewContentAlignment.MiddleCenter);
-            AddColumn("title", "Заголовок", 30, DataGridViewContentAlignment.MiddleLeft);
-            AddColumn("url", "URL", 32, DataGridViewContentAlignment.MiddleLeft);
-            AddColumn("size", "Размер", 8, DataGridViewContentAlignment.MiddleRight);
-            AddColumn("links", "Ссылки", 8, DataGridViewContentAlignment.MiddleRight);
+            AddColumn("num", "#", 5, DataGridViewContentAlignment.MiddleRight);
+            AddColumn("status", "Код", 6, DataGridViewContentAlignment.MiddleCenter);
+            AddColumn("depth", "Глуб.", 6, DataGridViewContentAlignment.MiddleCenter);
+            AddColumn("title", "Заголовок", 22, DataGridViewContentAlignment.MiddleLeft);
+            AddColumn("h1", "H1", 18, DataGridViewContentAlignment.MiddleLeft);
+            AddColumn("meta", "Meta Description", 24, DataGridViewContentAlignment.MiddleLeft);
+            AddColumn("url", "URL", 24, DataGridViewContentAlignment.MiddleLeft);
+            AddColumn("size", "Размер", 7, DataGridViewContentAlignment.MiddleRight);
+            AddColumn("links", "Ссылки", 7, DataGridViewContentAlignment.MiddleRight);
+            AddColumn("internal", "Внутр.", 7, DataGridViewContentAlignment.MiddleRight);
+            AddColumn("external", "Внеш.", 7, DataGridViewContentAlignment.MiddleRight);
+            AddColumn("email", "Email", 18, DataGridViewContentAlignment.MiddleLeft);
+            AddColumn("phones", "Телефоны", 16, DataGridViewContentAlignment.MiddleLeft);
 
             // Лог
             _logBox.Multiline = true;
@@ -342,7 +355,9 @@ namespace WebCrawler
             var statusProgress = new Progress<string>(Log);
 
             _cts = new CancellationTokenSource();
-            using var crawler = new Crawler(config);
+            _crawler?.Dispose();
+            var crawler = new Crawler(config);
+            _crawler = crawler;
 
             try
             {
@@ -364,6 +379,38 @@ namespace WebCrawler
                 _cts.Dispose();
                 _cts = null;
                 SetRunningState(false);
+                _csvBtn.Enabled = _crawler is { Results.Count: > 0 };
+            }
+        }
+
+        /// <summary>Сохраняет результаты последнего обхода в CSV-файл.</summary>
+        private void OnExportCsv(object? sender, EventArgs e)
+        {
+            if (_crawler is null || _crawler.Results.Count == 0)
+            {
+                MessageBox.Show("Нет данных для экспорта. Сначала выполните обход.",
+                    "Экспорт CSV", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using var dlg = new SaveFileDialog
+            {
+                Filter = "CSV-файлы (*.csv)|*.csv|Все файлы (*.*)|*.*",
+                FileName = "crawl_results.csv"
+            };
+            if (dlg.ShowDialog() != DialogResult.OK)
+                return;
+
+            try
+            {
+                _crawler.SaveCsv(dlg.FileName);
+                _statusLabel.Text = $"CSV сохранён: {dlg.FileName}";
+                Log($"[INFO] Экспортировано в CSV: {dlg.FileName}");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Не удалось сохранить файл:\n{ex.Message}",
+                    "Ошибка экспорта", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -379,7 +426,8 @@ namespace WebCrawler
             var p = update.Page;
             int rowIndex = _grid.Rows.Add(
                 update.TotalCount, p.StatusCode, p.Depth,
-                p.Title, p.Url, p.ContentLength, p.LinksFound);
+                p.Title, p.H1, p.MetaDescription, p.Url, p.ContentLength,
+                p.LinksFound, p.InternalLinks, p.ExternalLinks, p.Emails, p.Phones);
 
             if (p.StatusCode != 200)
                 _grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.MistyRose;
@@ -399,6 +447,8 @@ namespace WebCrawler
         {
             _startBtn.Enabled = !running;
             _stopBtn.Enabled = running;
+            if (running)
+                _csvBtn.Enabled = false;
             _startBtn.BackColor = running ? Color.FromArgb(160, 200, 240) : Accent;
             _urlBox.Enabled = _depthBox.Enabled = _pagesBox.Enabled =
                 _delayBox.Enabled = _domainBox.Enabled = _outputBox.Enabled =

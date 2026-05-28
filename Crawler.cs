@@ -27,6 +27,18 @@ namespace WebCrawler
             new(@"<title[^>]*>(.*?)</title>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
         private static readonly Regex _linkRegex =
             new(@"<a\s[^>]*href\s*=\s*[""']([^""'#][^""']*)[""']", RegexOptions.IgnoreCase);
+        private static readonly Regex _h1Regex =
+            new(@"<h1[^>]*>(.*?)</h1>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        private static readonly Regex _metaDescRegex =
+            new(@"<meta[^>]*name\s*=\s*[""']description[""'][^>]*content\s*=\s*[""'](.*?)[""']",
+                RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        private static readonly Regex _metaDescRegexAlt =
+            new(@"<meta[^>]*content\s*=\s*[""'](.*?)[""'][^>]*name\s*=\s*[""']description[""']",
+                RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        private static readonly Regex _emailRegex =
+            new(@"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", RegexOptions.IgnoreCase);
+        private static readonly Regex _phoneRegex =
+            new(@"(?:\+?\d[\d\-\s().]{7,}\d)", RegexOptions.IgnoreCase);
 
         /// <summary>Результаты обхода (только для чтения).</summary>
         public IReadOnlyList<PageInfo> Results => _results;
@@ -77,7 +89,7 @@ namespace WebCrawler
                 if (depth > _config.MaxDepth)
                     continue;
 
-                var (pageInfo, html) = await FetchPageAsync(url, ct);
+                var (pageInfo, html) = await FetchPageAsync(url, baseDomain, ct);
                 pageInfo.Depth = depth;
                 _results.Add(pageInfo);
 
@@ -117,7 +129,7 @@ namespace WebCrawler
         /// Загружает страницу один раз и возвращает её метаданные вместе с HTML.
         /// HTML переиспользуется для извлечения ссылок — повторного запроса нет.
         /// </summary>
-        private async Task<(PageInfo info, string? html)> FetchPageAsync(string url, CancellationToken ct)
+        private async Task<(PageInfo info, string? html)> FetchPageAsync(string url, string baseDomain, CancellationToken ct)
         {
             var info = new PageInfo { Url = url, CrawledAt = DateTime.Now };
             string? html = null;
@@ -138,6 +150,8 @@ namespace WebCrawler
                         info.Title = CleanText(titleMatch.Groups[1].Value);
 
                     info.LinksFound = _linkRegex.Matches(html).Count;
+
+                    ExtractSeoData(info, html, url, baseDomain);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -183,6 +197,87 @@ namespace WebCrawler
         }
 
         /// <summary>
+        /// Извлекает SEO- и контактные данные из HTML: H1, meta description,
+        /// e-mail, телефоны, а также подсчитывает внутренние/внешние ссылки.
+        /// </summary>
+        private static void ExtractSeoData(PageInfo info, string html, string pageUrl, string baseDomain)
+        {
+            // H1 — берём первый заголовок первого уровня
+            var h1Match = _h1Regex.Match(html);
+            if (h1Match.Success)
+                info.H1 = CleanText(h1Match.Groups[1].Value);
+
+            // Meta description — поддерживаем оба порядка атрибутов name/content
+            var metaMatch = _metaDescRegex.Match(html);
+            if (!metaMatch.Success)
+                metaMatch = _metaDescRegexAlt.Match(html);
+            if (metaMatch.Success)
+                info.MetaDescription = CleanText(metaMatch.Groups[1].Value);
+
+            // E-mail — собираем уникальные адреса (в т.ч. из mailto:)
+            var emails = _emailRegex.Matches(html)
+                .Select(m => m.Value)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(10);
+            info.Emails = string.Join("; ", emails);
+
+            // Телефоны — извлекаем в первую очередь из ссылок tel:
+            var phones = ExtractPhones(html);
+            info.Phones = string.Join("; ", phones);
+
+            // Внутренние/внешние ссылки относительно стартового домена
+            if (Uri.TryCreate(pageUrl, UriKind.Absolute, out Uri? baseUri))
+            {
+                int internalCount = 0, externalCount = 0;
+                foreach (Match match in _linkRegex.Matches(html))
+                {
+                    string href = match.Groups[1].Value.Trim();
+                    if (!Uri.TryCreate(baseUri, href, out Uri? abs))
+                        continue;
+                    if (abs.Host.Equals(baseDomain, StringComparison.OrdinalIgnoreCase))
+                        internalCount++;
+                    else
+                        externalCount++;
+                }
+                info.InternalLinks = internalCount;
+                info.ExternalLinks = externalCount;
+            }
+        }
+
+        /// <summary>
+        /// Извлекает телефонные номера: сначала из ссылок tel:, затем из текста.
+        /// </summary>
+        private static List<string> ExtractPhones(string html)
+        {
+            var result = new List<string>();
+
+            // tel:-ссылки — самый надёжный источник
+            foreach (Match m in Regex.Matches(html, @"tel:([+\d\-\s().]+)", RegexOptions.IgnoreCase))
+            {
+                string phone = m.Groups[1].Value.Trim();
+                if (phone.Length >= 7 && !result.Contains(phone))
+                    result.Add(phone);
+            }
+
+            // Если tel:-ссылок нет — пробуем найти номера в тексте страницы
+            if (result.Count == 0)
+            {
+                string text = CleanText(html);
+                foreach (Match m in _phoneRegex.Matches(text))
+                {
+                    string phone = m.Value.Trim();
+                    int digits = phone.Count(char.IsDigit);
+                    if (digits is >= 7 and <= 15 && !result.Contains(phone))
+                        result.Add(phone);
+                    if (result.Count >= 10)
+                        break;
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
         /// Сохраняет результаты обхода и сводную статистику в текстовый файл.
         /// </summary>
         private void SaveResults()
@@ -209,9 +304,15 @@ namespace WebCrawler
             {
                 sb.AppendLine($"[{i++}] {page.Url}");
                 sb.AppendLine($"    Title:   {page.Title}");
+                sb.AppendLine($"    H1:      {page.H1}");
+                sb.AppendLine($"    Meta:    {page.MetaDescription}");
                 sb.AppendLine($"    Status:  {page.StatusCode}");
                 sb.AppendLine($"    Size:    {page.ContentLength} bytes");
-                sb.AppendLine($"    Links:   {page.LinksFound}");
+                sb.AppendLine($"    Links:   {page.LinksFound} (внутр. {page.InternalLinks} / внеш. {page.ExternalLinks})");
+                if (!string.IsNullOrEmpty(page.Emails))
+                    sb.AppendLine($"    Email:   {page.Emails}");
+                if (!string.IsNullOrEmpty(page.Phones))
+                    sb.AppendLine($"    Phones:  {page.Phones}");
                 sb.AppendLine($"    Time:    {page.CrawledAt:HH:mm:ss}");
                 if (page.Error != null)
                     sb.AppendLine($"    Error:   {page.Error}");
@@ -232,6 +333,61 @@ namespace WebCrawler
                 sb.AppendLine($"  {p.LinksFound,4} links - {TruncateUrl(p.Url, 50)}");
 
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// Формирует CSV-представление результатов (разделитель — точка с запятой,
+        /// что удобно для русской локали Excel). Кодировка — UTF-8 c BOM.
+        /// </summary>
+        public string BuildCsv()
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine(string.Join(';', new[]
+            {
+                "#", "URL", "Title", "H1", "MetaDescription", "Status", "Size",
+                "Links", "InternalLinks", "ExternalLinks", "Email", "Phones",
+                "Depth", "CrawledAt", "Error"
+            }));
+
+            int i = 1;
+            foreach (var p in _results)
+            {
+                sb.AppendLine(string.Join(';', new[]
+                {
+                    Csv(i++.ToString()),
+                    Csv(p.Url),
+                    Csv(p.Title),
+                    Csv(p.H1),
+                    Csv(p.MetaDescription),
+                    Csv(p.StatusCode.ToString()),
+                    Csv(p.ContentLength.ToString()),
+                    Csv(p.LinksFound.ToString()),
+                    Csv(p.InternalLinks.ToString()),
+                    Csv(p.ExternalLinks.ToString()),
+                    Csv(p.Emails),
+                    Csv(p.Phones),
+                    Csv(p.Depth.ToString()),
+                    Csv(p.CrawledAt.ToString("yyyy-MM-dd HH:mm:ss")),
+                    Csv(p.Error ?? "")
+                }));
+            }
+
+            return sb.ToString();
+        }
+
+        /// <summary>Сохраняет результаты в CSV-файл (UTF-8 с BOM для Excel).</summary>
+        public void SaveCsv(string path)
+        {
+            File.WriteAllText(path, BuildCsv(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        }
+
+        /// <summary>Экранирует значение поля по правилам CSV (RFC 4180).</summary>
+        private static string Csv(string value)
+        {
+            value ??= "";
+            if (value.Contains('"') || value.Contains(';') || value.Contains('\n') || value.Contains('\r'))
+                return "\"" + value.Replace("\"", "\"\"") + "\"";
+            return value;
         }
 
         private static string NormalizeUrl(string url)

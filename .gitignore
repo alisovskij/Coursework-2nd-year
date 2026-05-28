@@ -1,0 +1,12 @@
+# Артефакты сборки .NET
+bin/
+obj/
+
+# Результаты обхода (генерируются программой)
+crawl_results.txt
+crawl_results.csv
+
+# IDE
+.vs/
+.idea/
+*.user

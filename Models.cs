@@ -15,6 +15,14 @@ namespace WebCrawler
         public int LinksFound { get; set; }
         public int Depth { get; set; }
         public string? Error { get; set; }
+
+        // --- SEO / контактные данные, извлечённые со страницы ---
+        public string H1 { get; set; } = "";
+        public string MetaDescription { get; set; } = "";
+        public string Emails { get; set; } = "";
+        public string Phones { get; set; } = "";
+        public int InternalLinks { get; set; }
+        public int ExternalLinks { get; set; }
     }
 
     /// <summary>
