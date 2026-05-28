@@ -1,0 +1,14 @@
+/home/artem/Koleso/obj/Debug/net8.0-windows/WebCrawler.GeneratedMSBuildEditorConfig.editorconfig
+/home/artem/Koleso/obj/Debug/net8.0-windows/WebCrawler.AssemblyInfoInputs.cache
+/home/artem/Koleso/obj/Debug/net8.0-windows/WebCrawler.AssemblyInfo.cs
+/home/artem/Koleso/obj/Debug/net8.0-windows/WebCrawler.csproj.CoreCompileInputs.cache
+/home/artem/Koleso/bin/Debug/net8.0-windows/WebCrawler
+/home/artem/Koleso/bin/Debug/net8.0-windows/WebCrawler.deps.json
+/home/artem/Koleso/bin/Debug/net8.0-windows/WebCrawler.runtimeconfig.json
+/home/artem/Koleso/bin/Debug/net8.0-windows/WebCrawler.dll
+/home/artem/Koleso/bin/Debug/net8.0-windows/WebCrawler.pdb
+/home/artem/Koleso/obj/Debug/net8.0-windows/WebCrawler.dll
+/home/artem/Koleso/obj/Debug/net8.0-windows/refint/WebCrawler.dll
+/home/artem/Koleso/obj/Debug/net8.0-windows/WebCrawler.pdb
+/home/artem/Koleso/obj/Debug/net8.0-windows/WebCrawler.genruntimeconfig.cache
+/home/artem/Koleso/obj/Debug/net8.0-windows/ref/WebCrawler.dll
